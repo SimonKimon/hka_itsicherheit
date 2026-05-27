@@ -1,0 +1,212 @@
+\documentclass[conference]{IEEEtran}
+\IEEEoverridecommandlockouts
+
+% --- Encoding & Sprache ---
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[ngerman]{babel}
+
+% --- Pakete laut IEEE-Template ---
+\usepackage{cite}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{algorithmic}
+\usepackage{graphicx}
+\usepackage{textcomp}
+\usepackage{xcolor}
+\usepackage{array}
+\usepackage{booktabs}
+
+% --- Inline-Code Befehl ---
+\newcommand{\code}[1]{\texttt{\small #1}}
+
+\def\BibTeX{{\rm B\kern-.05em{\sc i\kern-.025em b}\kern-.08em
+    T\kern-.1667em\lower.7ex\hbox{E}\kern-.125emX}}
+
+\begin{document}
+
+\title{Container und virtuelle Maschinen --\\
+Isolationsmechanismen, Bedrohungsmodelle\\
+und Sicherheitsanalyse\\
+{\footnotesize IT-Sicherheit Übung -- Thema 12, Hochschule Karlsruhe}}
+
+\author{%
+\IEEEauthorblockN{1\textsuperscript{st} Simon Klaes}
+\IEEEauthorblockA{\textit{Hochschule Karlsruhe} \\
+Karlsruhe, Deutschland \\
+klsi1012@h-ka.de}
+\and
+\IEEEauthorblockN{2\textsuperscript{nd} Radek Pekul}
+\IEEEauthorblockA{\textit{Hochschule Karlsruhe} \\
+Karlsruhe, Deutschland \\
+pera1011@h-ka.de}
+\and
+\IEEEauthorblockN{3\textsuperscript{rd} Joel Maxeiner}
+\IEEEauthorblockA{\textit{Hochschule Karlsruhe} \\
+Karlsruhe, Deutschland \\
+majo1064@h-ka.de}
+\and
+\IEEEauthorblockN{4\textsuperscript{th} Pius Tebbe}
+\IEEEauthorblockA{\textit{Hochschule Karlsruhe} \\
+Karlsruhe, Deutschland \\
+tepi1011@h-ka.de}
+}
+
+\maketitle
+
+\begin{abstract}
+Container und virtuelle Maschinen (VMs) sind die zentralen Bausteine moderner
+IT-Infrastrukturen, unterscheiden sich aber grundlegend in ihrer Isolations\-stärke.
+Diese Arbeit vergleicht beide Konzepte hinsichtlich ihrer Sicherheits\-eigenschaften:
+Sie erläutert die fundamentalen Isolationsmechanismen (Namespaces, cgroups,
+Hypervisor-Virtualisierung), demonstriert in einer Live-Demo den Normalbetrieb
+beider Technologien sowie typische Fehlkonfigurationen, und diskutiert reale
+Escape-Szenarien und Best Practices. Ziel ist es, fundiert zu zeigen, wann welche
+Technologie sicherheits\-technisch angemessen ist.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Container, Docker, virtuelle Maschine, Hypervisor, Namespaces, cgroups,
+Isolation, Container-Escape, IT-Sicherheit
+\end{IEEEkeywords}
+
+% =====================================================================
+% Person A -- ca. 1 Seite (ca. 1 Spalte in IEEE Conference Format)
+% =====================================================================
+\section{Grundlagen der Isolation}
+
+\subsection{Motivation und Bedrohungsmodell}
+Sobald mehrere Workloads auf derselben Hardware laufen, stellt sich die Frage,
+\textit{welche Komponente bei einem Ausbruch versagen darf}. Beim
+\textbf{Container-Bedrohungsmodell} wird angenommen, dass der Angreifer bereits
+Code im Container ausführt -- etwa über eine kompromittierte Webanwendung
+oder ein bösartiges Image -- und versucht, den Host oder Nachbarcontainer zu
+übernehmen. Beim \textbf{VM-Bedrohungsmodell} wird sogar angenommen, dass der
+Gast vollständig kompromittiert ist (Root im Gast-Kernel); dennoch sollen Host
+und andere Gäste sicher bleiben. Container schützen damit \textit{vor versehentlichen
+Konflikten zwischen vertrauenswürdigen Workloads}, VMs dagegen
+\textit{vor bösartigen Mandanten} und sind deshalb Standard für Multi-Tenant-Clouds
+wie AWS EC2 oder Azure VMs~\cite{b_lehrgang}.
+
+\subsection{Virtualisierungskonzepte: Hypervisor-Typen}
+Eine VM simuliert einen kompletten Computer mit eigenem Kernel, eigener
+Hardware-Sicht und eigenem Bootloader. Der Hypervisor ist die Schicht, die
+diese Trennung erzwingt:
+\begin{itemize}
+  \item \textbf{Typ 1 (Bare-Metal):} läuft direkt auf der Hardware, ohne Host-OS
+        dazwischen. Beispiele: KVM, Xen, VMware ESXi, Microsoft Hyper-V.
+        Geringe Trusted Computing Base (TCB) und produktiv bevorzugt.
+  \item \textbf{Typ 2 (Hosted):} läuft als Anwendung auf einem Betriebssystem.
+        Beispiele: VirtualBox, VMware Workstation, Parallels Desktop, UTM.
+\end{itemize}
+Hardware-Erweiterungen (Intel VT-x, AMD-V, ARM Virtualization Extensions)
+führen einen privilegierteren CPU-Modus ein (\glqq Ring~$-1$\grqq{} bzw.
+EL2 auf ARM). Privilegierte Operationen des Gasts lösen einen
+\textit{VM Exit} aus, den der Hypervisor behandelt. EPT/NPT übersetzt
+Gast-physikalische zu Host-physikalischen Adressen in Hardware. Die
+Schnittstelle zwischen Gast und Host besteht damit nur aus wenigen Hypercalls
+und para\-virtualisierten Geräten (virtio) -- eine deutlich kleinere
+Angriffsfläche als das Linux-Syscall-Interface~\cite{b_bedrohung}.
+
+\subsection{Container-Grundlagen: Namespaces, Cgroups, Kernel-Sharing}
+Container sind technisch \textbf{keine eigene Technologie}, sondern eine
+Kombination bestehender Linux-Kernel-Features. Sie sind im Wesentlichen
+isolierte Prozesse, die denselben Kernel mit dem Host teilen.
+
+\textbf{Namespaces} schaffen pro Container eine eigene Sicht auf Kernel-Ressourcen:
+\code{PID} (eigene Prozessbäume), \code{NET} (eigener Netzwerkstack), \code{MNT}
+(eigene Mount-Points), \code{IPC}, \code{UTS} (Hostname), \code{USER} (UID-Mapping),
+\code{CGROUP} und \code{TIME}. Namespaces beschränken \textit{Sichtbarkeit}, nicht
+welche Syscalls ausgeführt werden dürfen.
+
+\textbf{Control Groups (cgroups)} sind orthogonal dazu und beschränken
+\textit{Ressourcenverbrauch} (CPU, Speicher, Block-I/O, Anzahl Prozesse). Ohne
+cgroups könnte ein einzelner Container per Fork-Bombe das Host-System lahm\-legen.
+
+Ergänzend reduzieren weitere Mechanismen die Angriffsfläche:
+\textbf{Capabilities} zerlegen die Root-Rechte in ca. 40 Einzelrechte (Container
+erhalten standardmäßig nur ca. 14), \textbf{Seccomp-BPF} filtert Syscalls (Docker
+blockiert per Default ca. 60 von ca. 330), und \textbf{LSMs} wie AppArmor oder
+SELinux setzen Mandatory Access Control durch.
+
+\subsection{Vertrauensgrenzen und Vergleich}
+Der entscheidende Unterschied ist die Frage, was bei einem Ausbruch versagen
+muss. Bei Containern ist die Vertrauensgrenze der \textbf{geteilte Linux-Kernel}
+-- jede ausnutzbare Kernel-Schwachstelle ist potenziell ein Container-Escape.
+Die TCB umfasst ca. 30 Millionen Zeilen Code (gesamter Kernel inkl. Treiber,
+Syscall-Interface, Dateisystemen). Bei VMs ist die Vertrauensgrenze der
+\textbf{Hypervisor}; die TCB im Hot-Path liegt z.\,B. bei KVM bei rund
+100\,000 Zeilen Code -- zwei bis drei Größenordnungen weniger
+Angriffsfläche~\cite{b_lehrgang}. Tabelle~\ref{tab:isolation} fasst die
+wesentlichen Dimensionen zusammen.
+
+\begin{table}[htbp]
+\caption{Vergleich der Isolationsgarantien}
+\label{tab:isolation}
+\begin{center}
+\footnotesize
+\begin{tabular}{@{}p{2.0cm}p{2.4cm}p{2.6cm}@{}}
+\toprule
+\textbf{Dimension} & \textbf{Container} & \textbf{VM} \\
+\midrule
+Isolationsgrenze & Kernel (geteilt)        & Hardware (Hypervisor) \\
+Boot-Zeit        & Millisekunden           & Sekunden bis Minuten \\
+Overhead         & MB                      & Hunderte MB bis GB \\
+Dichte/Host      & Hunderte                & Dutzende \\
+Angriffsfläche   & $\sim$330 Syscalls      & Hypercalls + Geräte \\
+TCB              & $\sim$30 Mio. LOC       & $\sim$100\,k LOC \\
+Multi-Tenancy    & Unzureichend            & Standard \\
+\bottomrule
+\end{tabular}
+\end{center}
+\end{table}
+
+% =====================================================================
+% Person B -- ca. 1 Seite -- Platzhalter
+% =====================================================================
+\section{Implementierung und Normalbetrieb}
+\textit{[Abschnitt von Person B: Setup des Demo-Dienstes (Python HTTP-Server)
+sowohl als Docker-Container als auch in einer VirtualBox/UTM-VM,
+Ressourcenisolierung mit \code{docker stats} und \code{htop}, Netzwerkvergleich
+Container-Bridge vs.\ NAT/Bridged, Analyse von \code{ps}, \code{top},
+\code{/proc}, Fazit zur vorgesehenen Isolation.]}
+
+% =====================================================================
+% Person C -- ca. 1 Seite -- Platzhalter
+% =====================================================================
+\section{Fehlkonfigurationen und Schwachstellen}
+\textit{[Abschnitt von Person C: Demonstration und Analyse typischer
+Fehlkonfigurationen. Container: \code{--privileged}, gemountete Host-Volumes
+(\code{-v /etc:/host-etc}), deaktiviertes Seccomp-Profil
+(\code{--security-opt seccomp=unconfined}), gemounteter Docker-Socket. VM:
+unsichere Bridged-Konfiguration, Shared Folders, aktive Komfort-Geräte.
+Für jede Fehlkonfiguration: welche Isolationsgrenze bricht?]}
+
+% =====================================================================
+% Person D -- ca. 1 Seite -- Platzhalter
+% =====================================================================
+\section{Escape-Szenarien und Best Practices}
+\textit{[Abschnitt von Person D: Container-Escapes mit CVE-Beispielen
+(CVE-2019-5736 runc, CVE-2022-0492 cgroups v1, Dirty Pipe CVE-2022-0847),
+VM-Escapes (VENOM CVE-2015-3456, VirtualBox-CVEs), Side-Channel-Angriffe
+(Spectre/Meltdown). Best Practices: Rootless Container, minimale Images,
+seccomp, read-only Filesystem, Netzwerksegmentierung, Hypervisor-Härtung.
+Gesamtfazit: wann Container, wann VM?]}
+
+% =====================================================================
+\section*{Hinweis zur KI-Nutzung}
+Bei der Recherche und der Erstellung dieses Dokuments wurden KI-gestützte
+Werkzeuge (Anthropic Claude) zur Strukturierung von Inhalten, zum Erklären
+von Fachbegriffen und zur sprachlichen Glättung eingesetzt. Sämtliche
+inhaltlichen Aussagen wurden von den Autorinnen und Autoren geprüft und
+gegen die Lehrgangs- und Referenzquellen abgeglichen.
+
+% =====================================================================
+\begin{thebibliography}{00}
+\bibitem{b_lehrgang} Systemsicherheits-Lehrgang, \glqq Container vs.\ Virtuelle Maschinen -- Ein tiefgehender Lehrgang\grqq, Hochschule Karlsruhe, 2026.
+\bibitem{b_bedrohung} \glqq Container und Virtuelle Maschinen -- Isolationsmechanismen, Bedrohungsmodelle und Sicherheitsanalyse\grqq, internes Skript, Hochschule Karlsruhe, 2026.
+\bibitem{b_cve5736} MITRE, CVE-2019-5736 (\code{runc}-Container-Breakout), 2019.
+\bibitem{b_dirtypipe} M.\ Kellermann, \glqq The Dirty Pipe Vulnerability (CVE-2022-0847)\grqq, 2022.
+\bibitem{b_venom} CrowdStrike, \glqq VENOM Vulnerability (CVE-2015-3456)\grqq, 2015.
+\end{thebibliography}
+
+\end{document}
