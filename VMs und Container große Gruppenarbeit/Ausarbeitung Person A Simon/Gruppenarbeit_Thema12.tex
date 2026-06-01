@@ -15,6 +15,23 @@
 \usepackage{xcolor}
 \usepackage{array}
 \usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{float}
+\hypersetup{
+    colorlinks=true,
+    linkcolor=blue,
+    urlcolor=blue,
+}
+
+\lstset{
+  basicstyle=\ttfamily\footnotesize,
+  breaklines=true,
+  breakatwhitespace=true,
+  columns=fullflexible,
+  keepspaces=true,
+  frame=none
+}
 
 % --- Inline-Code Befehl ---
 \newcommand{\code}[1]{\texttt{\small #1}}
@@ -33,22 +50,26 @@ und Sicherheitsanalyse\\
 \IEEEauthorblockN{1\textsuperscript{st} Simon Klaes}
 \IEEEauthorblockA{\textit{Hochschule Karlsruhe} \\
 Karlsruhe, Deutschland \\
-klsi1012@h-ka.de}
+klsi1012@h-ka.de \\
+\autoref{Grundlagen der Isolation}}
 \and
 \IEEEauthorblockN{2\textsuperscript{nd} Radek Pekul}
 \IEEEauthorblockA{\textit{Hochschule Karlsruhe} \\
 Karlsruhe, Deutschland \\
-pera1011@h-ka.de}
+pera1011@h-ka.de \\
+\autoref{Implementierung und Normalbetrieb}}
 \and
 \IEEEauthorblockN{3\textsuperscript{rd} Joel Maxeiner}
 \IEEEauthorblockA{\textit{Hochschule Karlsruhe} \\
 Karlsruhe, Deutschland \\
-majo1064@h-ka.de}
+majo1064@h-ka.de \\
+\autoref{sec:fehlkonfig}}
 \and
 \IEEEauthorblockN{4\textsuperscript{th} Pius Tebbe}
 \IEEEauthorblockA{\textit{Hochschule Karlsruhe} \\
 Karlsruhe, Deutschland \\
-tepi1011@h-ka.de}
+tepi1011@h-ka.de \\
+\autoref{sec:falure_scenario}}
 }
 
 \maketitle
@@ -73,6 +94,7 @@ Isolation, Container-Escape, IT-Sicherheit
 % Person A -- ca. 1 Seite (ca. 1 Spalte in IEEE Conference Format)
 % =====================================================================
 \section{Grundlagen der Isolation}
+\label{Grundlagen der Isolation}
 
 \subsection{Motivation und Bedrohungsmodell}
 Sobald mehrere Workloads auf derselben Hardware laufen, stellt sich die Frage,
@@ -85,7 +107,7 @@ Gast vollständig kompromittiert ist (Root im Gast-Kernel); dennoch sollen Host
 und andere Gäste sicher bleiben. Container schützen damit \textit{vor versehentlichen
 Konflikten zwischen vertrauenswürdigen Workloads}, VMs dagegen
 \textit{vor bösartigen Mandanten} und sind deshalb Standard für Multi-Tenant-Clouds
-wie AWS EC2 oder Azure VMs~\cite{b_lehrgang}.
+wie AWS EC2 oder Azure VMs~\cite{b_nist_container,b_vm_container_compare}.
 
 \subsection{Virtualisierungskonzepte: Hypervisor-Typen}
 Eine VM simuliert einen kompletten Computer mit eigenem Kernel, eigener
@@ -105,7 +127,7 @@ EL2 auf ARM). Privilegierte Operationen des Gasts lösen einen
 Gast-physikalische zu Host-physikalischen Adressen in Hardware. Die
 Schnittstelle zwischen Gast und Host besteht damit nur aus wenigen Hypercalls
 und para\-virtualisierten Geräten (virtio) -- eine deutlich kleinere
-Angriffsfläche als das Linux-Syscall-Interface~\cite{b_bedrohung}.
+Angriffsfläche als das Linux-Syscall-Interface~\cite{b_vm_container_compare}.
 
 \subsection{Container-Grundlagen: Namespaces, Cgroups, Kernel-Sharing}
 Container sind technisch \textbf{keine eigene Technologie}, sondern eine
@@ -136,7 +158,7 @@ Die TCB umfasst ca. 30 Millionen Zeilen Code (gesamter Kernel inkl. Treiber,
 Syscall-Interface, Dateisystemen). Bei VMs ist die Vertrauensgrenze der
 \textbf{Hypervisor}; die TCB im Hot-Path liegt z.\,B. bei KVM bei rund
 100\,000 Zeilen Code -- zwei bis drei Größenordnungen weniger
-Angriffsfläche~\cite{b_lehrgang}. Tabelle~\ref{tab:isolation} fasst die
+Angriffsfläche~\cite{b_nist_container,b_vm_container_compare}. Tabelle~\ref{tab:isolation} fasst die
 wesentlichen Dimensionen zusammen.
 
 \begin{table}[htbp]
@@ -159,38 +181,306 @@ Multi-Tenancy    & Unzureichend            & Standard \\
 \end{tabular}
 \end{center}
 \end{table}
-
 % =====================================================================
-% Person B -- ca. 1 Seite -- Platzhalter
+% Person B gekürzt
 % =====================================================================
 \section{Implementierung und Normalbetrieb}
-\textit{[Abschnitt von Person B: Setup des Demo-Dienstes (Python HTTP-Server)
-sowohl als Docker-Container als auch in einer VirtualBox/UTM-VM,
-Ressourcenisolierung mit \code{docker stats} und \code{htop}, Netzwerkvergleich
-Container-Bridge vs.\ NAT/Bridged, Analyse von \code{ps}, \code{top},
-\code{/proc}, Fazit zur vorgesehenen Isolation.]}
+\label{Implementierung und Normalbetrieb}
+
+\subsection{Ziel des Vergleichs}
+Zur praktischen Gegenüberstellung wird derselbe Dienst in zwei Umgebungen
+betrieben. Einmal läuft er als Docker-Container und einmal in einer virtuellen
+Maschine. Als Beispiel dient ein einfacher Nginx-Webserver, da er leicht
+einzurichten ist und der Zugriff über den Browser einfach geprüft werden kann.
+
+Dabei werden der Ressourcenbedarf, der Netzwerkzugriff, die Systemrechte und
+die Grenzen der Isolation verglichen.
+
+\subsection{Docker Implementierung}
+Der Webserver wird in Docker mit begrenzten Ressourcen gestartet.
+
+\begin{lstlisting}
+docker run -d --name nginx-demo --memory=256m --cpus=0.5 -p 8080:80 nginx
+\end{lstlisting}
+
+Der Dienst ist anschließend über \texttt{http://localhost:8080} erreichbar.
+Mit \texttt{docker ps} lässt sich prüfen, ob der Container läuft. Der Befehl
+\texttt{docker stats} zeigt den aktuellen CPU- und Speicherverbrauch. Weitere
+Informationen zur Netzwerkkonfiguration liefert \texttt{docker inspect}.
+
+Container starten sehr schnell, weil kein vollständiges Betriebssystem gebootet
+werden muss. Sie teilen sich den Kernel mit dem Hostsystem und werden vor allem
+durch Namespaces und cgroups isoliert. Namespaces trennen zum Beispiel Prozesse,
+Netzwerk und Dateisystemansichten. Cgroups begrenzen die Nutzung von Ressourcen
+wie CPU und Arbeitsspeicher.
+
+\subsection{Implementierung in der virtuellen Maschine}
+Für die virtuelle Maschine wird beispielsweise eine Ubuntu-VM in VirtualBox
+verwendet. Im Gegensatz zum Container besitzt die VM ein eigenes Betriebssystem
+mit eigenem Kernel. Innerhalb der VM wird Nginx installiert und gestartet.
+
+\begin{lstlisting}
+sudo apt update
+sudo apt install nginx -y
+sudo systemctl enable nginx
+sudo systemctl start nginx
+\end{lstlisting}
+
+Der Status des Dienstes kann mit folgendem Befehl geprüft werden.
+
+\begin{lstlisting}
+systemctl status nginx
+\end{lstlisting}
+
+Im NAT-Modus ist die VM nicht direkt von außen erreichbar. Über eine
+Portweiterleitung, zum Beispiel von Host-Port 8081 auf VM-Port 80, kann der
+Webserver über \texttt{http://localhost:8081} vom Host aus geöffnet werden.
+
+Für die Analyse können in der VM mehrere Befehle genutzt werden.
+\texttt{ip a} zeigt die Netzwerkkonfiguration. Mit
+\texttt{ps aux | grep nginx} wird geprüft, ob Nginx-Prozesse laufen.
+\texttt{free -h} zeigt die aktuelle RAM-Nutzung und mit \texttt{top} können
+laufende Prozesse sowie CPU- und Speicherverbrauch beobachtet werden.
+
+\subsection{Vergleich der beiden Varianten}
+Container sind besonders effizient. Sie benötigen wenig Speicher, starten
+schnell und lassen sich mit Optionen wie \texttt{--memory} und
+\texttt{--cpus} gezielt begrenzen. Ihre Isolation basiert jedoch auf dem
+gemeinsamen Host-Kernel. Dadurch ist sie schwächer als bei einer virtuellen
+Maschine.
+
+Virtuelle Maschinen benötigen mehr RAM, mehr Speicherplatz und mehr Startzeit.
+Dafür bieten sie eine stärkere Trennung zwischen Host und Gast. Root-Rechte
+innerhalb der VM gelten normalerweise nur im Gastbetriebssystem und nicht direkt
+auf dem Host. Ein Ausbruch aus der VM würde in der Regel eine Schwachstelle im
+Hypervisor erfordern.
+
+Auch beim Netzwerk gibt es Unterschiede. Docker verwendet standardmäßig ein
+Bridge-Netzwerk mit Portweiterleitung. Die VM kann dagegen im NAT-Modus oder im
+Bridged-Modus betrieben werden. NAT ist stärker abgeschottet, während die VM im
+Bridged-Modus wie ein eigenes Gerät im lokalen Netzwerk erscheint.
+
+\begin{table}[H]
+\centering
+\caption{Vergleich von Container- und VM-Implementierung}
+\label{tab:vergleich}
+\footnotesize
+\begin{tabular}{p{0.22\linewidth} p{0.33\linewidth} p{0.33\linewidth}}
+\toprule
+\textbf{Kriterium} & \textbf{Container} & \textbf{VM} \\
+\midrule
+Kernel &
+Gemeinsamer Host-Kernel &
+Eigener Gast-Kernel \\
+
+Ressourcen &
+cgroups und Docker-Limits &
+Zuweisung über Hypervisor \\
+
+Netzwerk &
+Bridge-Netzwerk mit Port-Mapping &
+NAT oder Bridged-Modus \\
+
+Systemrechte &
+Root im Container eingeschränkt &
+Root nur im Gastbetriebssystem \\
+
+Isolation &
+Leichtgewichtig, aber kernelabhängig &
+Stärker durch Hypervisor \\
+
+Effizienz &
+Schneller Start, geringer Verbrauch &
+Höherer Ressourcenbedarf \\
+
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Fazit}
+Der Normalbetrieb zeigt den zentralen Unterschied zwischen beiden Ansätzen.
+Container sind schneller und ressourcenschonender, bieten aber eine schwächere
+Isolation, da sie den Host-Kernel teilen. Virtuelle Maschinen sind weniger
+effizient, trennen Host und Gast jedoch stärker durch den Hypervisor und den
+eigenen Kernel.
+
+Für sichere Container-Deployments sollten nur notwendige Ports freigegeben,
+Ressourcenlimits gesetzt und riskante Optionen wie \texttt{--privileged}
+vermieden werden.
 
 % =====================================================================
-% Person C -- ca. 1 Seite -- Platzhalter
+% Person C -- Block 3
 % =====================================================================
-\section{Fehlkonfigurationen und Schwachstellen}
-\textit{[Abschnitt von Person C: Demonstration und Analyse typischer
-Fehlkonfigurationen. Container: \code{--privileged}, gemountete Host-Volumes
-(\code{-v /etc:/host-etc}), deaktiviertes Seccomp-Profil
-(\code{--security-opt seccomp=unconfined}), gemounteter Docker-Socket. VM:
-unsichere Bridged-Konfiguration, Shared Folders, aktive Komfort-Geräte.
-Für jede Fehlkonfiguration: welche Isolationsgrenze bricht?]}
+\section{Fehlkonfigurationen und Schwächung der Isolationsgrenzen}
+\label{sec:fehlkonfig}
+
+In diesem Abschnitt wird gezeigt, wie gezielte Fehlkonfigurationen die
+zuvor beschriebenen Isolationsmechanismen von Containern und virtuellen
+Maschinen aushebeln können. Alle Demonstrationen wurden in einer isolierten
+KVM-Umgebung (Ubuntu~24.04 LTS auf Proxmox~VE) durchgeführt. Weder produktive 
+noch fremde Systeme wurden dabei berührt. Als Laufzeit diente Docker mit 
+\texttt{runc}~$\geq$~1.1.12, sodass die bekannte Escape-Schwachstelle \mbox{CVE-2024-21626} ausgeschlossen ist. 
+Jede Fehlkonfiguration wurde zunächst mit einer korrekt konfigurierten Umgebung verglichen, 
+um die Auswirkungen sichtbar zu machen. Die zugehörigen Bildschirmaufnahmen finden sich im Anhang.
+
+\subsection{Demo~1: Privilegierter Container (\texttt{-{}-privileged})}
+
+Als erste Fehlkonfiguration wird die Aufhebung der Container-Isolation durch den Schalter \texttt{-{}-privileged} demonstriert. 
+Ohne diesen Schalter (Normalbetrieb) startet Docker Container mit einem reduzierten Capability-Set, 
+das sicherheitskritische Rechte wie \texttt{CAP\_SYS\_ADMIN} ausschließt.
+Ist der Schalter \texttt{-{}-privileged} gesetzt, werden diese Beschränkungen aufgehoben,
+die Seccomp- und AppArmor-Profile deaktiviert und der Zugriff auf sämtliche Host-Geräte gewährt. 
+Der direkte Vergleich desselben Befehls macht dies sichtbar: 
+Während ein normaler Container beim Zugriff auf das über \texttt{-{}-pid=host} erreichbare 
+Host-Wurzelverzeichnis (\texttt{/proc/1/root/etc/shadow}) mit einer Zugriffsverweigerung abgewiesen wird,
+liest der privilegierte Container die Passwort-Hashes des Hosts im Klartext aus 
+(Anhang, Abb.~\ref{fig:privileged}). Damit sind die Capability- und die Geräte-Isolation verletzt; 
+ein Angreifer im Container besitzt effektiv Root-Rechte auf dem Host. 
+Als Gegenmaßnahme ist auf \texttt{-{}-privileged} zu verzichten und das Capability-Set mit 
+\texttt{-{}-cap-drop=ALL} zu leeren, um nur die tatsächlich benötigten Rechte einzeln zu vergeben.
+
+\subsection{Demo~2: Bind-Mount und Dateisystem-Isolation}
+
+In der zweiten Demonstration wird die Aufhebung der Dateistem-Isolation durch einen Bind-Mount gezeigt. 
+Normalerweise ist das Container-Dateisystem von dem des Hosts getrennt, 
+doch mit einem Bind-Mount kann ein Host-Verzeichnis direkt in den Container eingebunden werden.
+Im Normalbetrieb zeigt der Container nur die gesperrten Systemkonten seines eigenen Images;
+nach dem Bind-Mount erscheinen hingegen die realen Host-Konten samt gültigem SHA-512-Hash 
+des regulären Benutzers (Anhang, Abb.~\ref{fig:bindmount_read}). 
+Ein anschließender Schreibzugriff auf \texttt{/host-etc/hosts} ist nach dem Verlassen des Containers 
+auch auf dem Host nachweisbar (Anhang, Abb.~\ref{fig:bindmount_write})
+und belegt die bidirektionale Aufhebung der Isolation. 
+Mit Schreibrecht auf \texttt{/etc} ließe sich ein zusätzlicher Root-Benutzer anlegen oder ein SSH-Schlüssel hinterlegen.
+Abzusichern ist dies, indem nur benötigte Pfade und möglichst schreibgeschützt (\texttt{:ro}) eingebunden werden.
+
+\subsection{Demo~3: Deaktivierung von Seccomp und AppArmor}
+
+Als dritte Fehlkonfiguration wird die Deaktivierung der Seccomp- und AppArmor-Profile demonstriert.
+Standardmäßig blockiert das Docker-Seccomp-Profil etwa vierundvierzig Systemaufrufe, die für Kernel-Exploits nutzbar sind.
+Der Schalter \texttt{-{}-security-opt seccomp=unconfined} schaltet diesen Filter ab, was unmittelbar am Wechsel 
+des Seccomp-Status von \texttt{2} auf \texttt{0} im \texttt{/proc/1/status} des Container-Prozesses erkennbar ist (Anhang, Abb.~\ref{fig:seccomp}).
+Zuvor gefilterte Aufrufe wie \texttt{unshare} werden danach ausführbar.
+Das Abschalten allein bewirkt zwar keinen Ausbruch in den Container ein und umgeht so die Dateisystem-Trennung, 
+ohne dass eine Software-Schwachstelle ausgenutzt werden müsste, es öffnet jedoch die Tür für die Ausnutzung 
+von Kernel-Schwachstellen und unterläuft so das Prinzip der gestaffelten Verteidigung.
+Die Standardprofile sollten daher nie pauschal deaktiviert, sondern bei Bedarf durch eng gefasste eigene Profile ersetzt werden.
+
+\subsection{Demo~4: Netzwerkkonfiguration der VM}
+
+Die letzte Fehlkonfiguration betrifft die Netzwerkkonfiguration der virtuellen Maschine.
+Im Normalbetrieb ist die VM über eine interne Bridge mit dem Host verbunden, sodass sie keinen direkten Zugriff auf das produktive Netzwerk hat. 
+Die Umstellung auf eine Bridge mit physischem Uplink ermöglicht der VM hingegen die direkte Kommunikation mit anderen Geräten im LAN. 
+In der Demonstration war derselbe Dienst bei interner Bridge von außen nicht erreichbar, nach Umstellung auf eine Bridge mit Uplink 
+jedoch von einem zweiten Gerät im LAN ansprechbar (Anhang, Abb.~\ref{fig:netzwerk_1},~\ref{fig:netzwerk_2}).
+Hier wird die Netzwerk-Vertrauensgrenze verletzt: Eine kompromittierte VM kann als Ausgangspunkt für Angriffe auf weitere Netzwerkgeräte dienen, ohne dass der Hypervisor dies verhindert.
+Darum sind Test- und Demonstrationssysteme an einer interne Bridge ohne Uplink oder hinter NAT zu betreiben und durch Firewall-Regeln sowie Netzsegmentierung abzusichern.
+
+Am Ende zeigt sich, dass Container anders als virtuelle Maschinen denselben Kernel wie der Host nutzen und ihre Isolation allein auf Software-Mechanismen beruht. 
+Fällt einer dieser Mechanismen durch Fehlkonfiguration weg, ist der Weg zum Host entsprechend kurz.
 
 % =====================================================================
-% Person D -- ca. 1 Seite -- Platzhalter
+% Person D -- Block 4
 % =====================================================================
-\section{Escape-Szenarien und Best Practices}
-\textit{[Abschnitt von Person D: Container-Escapes mit CVE-Beispielen
-(CVE-2019-5736 runc, CVE-2022-0492 cgroups v1, Dirty Pipe CVE-2022-0847),
-VM-Escapes (VENOM CVE-2015-3456, VirtualBox-CVEs), Side-Channel-Angriffe
-(Spectre/Meltdown). Best Practices: Rootless Container, minimale Images,
-seccomp, read-only Filesystem, Netzwerksegmentierung, Hypervisor-Härtung.
-Gesamtfazit: wann Container, wann VM?]}
+\section{Failure- und Escape-Szenarien im Vergleich}
+\label{sec:falure_scenario}
+ 
+\subsection{Failure-Szenarien}
+ 
+\textbf{Ressourcen-Überlastung:}
+\begin{itemize}
+    \item Container: 
+    Container teilen sich den Host-Kernel und konkurrieren direkt um CPU/RAM.
+    Wenn ein Container plötzlich sehr viel CPU oder RAM verbraucht, kann er ohne strikte Begrenzung andere Container beeinträchtigen.
+    Diese erhalten dann weniger CPU-Zeit oder Arbeitsspeicher, was als sogenanntes \glqq Noisy-Neighbor\grqq{}-Problem bezeichnet wird.
+    \item Virtuelle Maschine: 
+    VMs wird beim Start eine feste Menge an CPU und RAM zugewiesen.
+    Verbraucht die Anwendung in der VM zu viel, stürzt nur diese eine VM ab. Der Host und andere VMs bleiben unberührt.
+\end{itemize}
+ 
+\textbf{Kernel-Crash:}
+\begin{itemize}
+    \item Container: 
+    Verursacht eine Anwendung in einem Container einen kritischen Fehler, der den Kernel zum Absturz bringt, sind alle Container auf dem betroffenen Host betroffen. 
+    Da kein eigener Kernel pro Container existiert, kann der Ausfall nicht auf einen einzelnen Container begrenzt werden.
+    \item Virtuelle Maschine: 
+    Bringt eine Anwendung den Kernel zum Absturz, stürzt nur das Gast-Betriebssystem dieser einen VM ab. 
+    Der Hypervisor läuft weiter, und alle anderen VMs merken nichts davon.
+\end{itemize}
+ 
+ 
+\subsection{Escape-Szenarien}
+\textbf{Ausbruch über den Kernel bzw. Hypervisor:}
+\begin{itemize}
+    \item Container: 
+    Da Container direkt mit dem Kernel des Host-Systems kommunizieren, reicht eine Sicherheitslücke im Kernel (z. B. durch Systemaufrufe/Syscalls), um einen Container-Escape zu ermöglichen. 
+    Ist der Angreifer einmal auf dem Host-System, hat er Zugriff auf alle dort laufenden Container.
+    \item Virtuelle Maschine: 
+    Bei VMs ist für einen Escape eine Schwachstelle im Hypervisor erforderlich. 
+    Dieser bildet eine zusätzliche Isolationsebene zwischen Gast und Host und stellt nur eine stark begrenzte, hardwarenahe Schnittstelle bereit. 
+    Dadurch sind Hypervisor-Escapes technisch deutlich komplexer und seltener. 
+    Ein Beispiel ist CVE-2019-2525 (Oracle VirtualBox), eine Schwachstelle in der Core-Komponente, die (oft in Kombination mit anderen Lücken) einen Escape ermöglichen konnte. 
+\end{itemize}
+ 
+\textbf{Fehlkonfiguration als Einfallstor:}
+\begin{itemize}
+    \item Container: 
+    Container sind besonders anfällig für Fehlkonfigurationen. 
+    Werden Container beispielsweise als root-Benutzer mit erweiterten Rechten oder mit Zugriff auf den Docker-Socket gestartet, kann ein Angreifer aus dem Container heraus privilegierte Aktionen auf dem Host-System durchführen. 
+    In solchen Fällen entsteht ein Escape häufig nicht durch eine Software-Sicherheitslücke, sondern durch fehlerhafte Konfiguration.
+    \item Virtuelle Maschine:
+    Auch bei virtuellen Maschinen können Fehlkonfigurationen ein Sicherheitsrisiko darstellen, beispielsweise durch falsch konfigurierte Management-Schnittstellen, gemeinsam eingebundene Ordner oder unzureichende Netzwerksegmentierung. 
+    Selbst bei Administratorrechten innerhalb der VM bleibt die Isolation durch den Hypervisor jedoch in der Regel bestehen, sodass ein direkter Zugriff auf das Host-System deutlich erschwert wird.
+\end{itemize}
+ 
+ 
+\section*{Praktische Sicherheitsauswirkungen in realen Deployment-Szenarien}
+\begin{itemize}
+    \item \textbf{Multi-Tenant-Umgebungen (z. B. öffentliche Cloud):}  
+    In Umgebungen, in denen mehrere Kunden dieselbe physische Infrastruktur nutzen, gelten virtuelle Maschinen als sicherer, da der Hypervisor eine zusätzliche Isolationsebene bereitstellt. 
+    Gelingt einem Angreifer jedoch ein Container-Escape, kann er unter Umständen auf Ressourcen anderer Container oder sogar auf den Host zugreifen. 
+    Zum Beispiel könnte dies dazu führen, dass sensible Kundendaten ausgelesen, Anwendungen manipuliert oder weitere Systeme kompromittiert werden. 
+    Ein erfolgreicher Angriff hätte damit potenziell Auswirkungen auf mehrere Mandanten gleichzeitig und könnte erhebliche finanzielle sowie rechtliche Folgen nach sich ziehen.
+
+    \item \textbf{Entwicklung und Produktion:}  
+    In Entwicklungsumgebungen werden Container häufig mit erweiterten Rechten oder vereinfachten Konfigurationen betrieben, um Entwicklungsprozesse zu beschleunigen. 
+    Werden solche Konfigurationen versehentlich in die Produktionsumgebung übernommen, kann ein Angreifer diese ausnutzen, um privilegierten Zugriff auf das System zu erlangen. 
+    Ein möglchies Szenario ist die Kompromittierung einer Webanwendung innerhalb eines Containers, von der aus sich der Angreifer aufgrund überhöhter Rechte Zugriff auf den Host verschafft. 
+    Dadurch könnten Datenbanken manipuliert, vertrauliche Kundendaten entwendet oder geschäftskritische Dienste außer Betrieb gesetzt werden. 
+    Für das betroffene Unternehmen kann dies zu Produktionsausfällen, finanziellen Schäden, Datenschutzverletzungen und einem Vertrauensverlust bei Kunden führen.
+
+    \item \textbf{CI/CD-Pipelines und Supply-Chain-Angriffe:}  
+    Container werden häufig über öffentliche Registries oder interne Image-Repositories automatisiert in Build- und Deployment-Prozesse eingebunden. 
+    Wird ein kompromittiertes Container-Image in die Pipeline eingeschleust, kann sich Schadcode automatisiert in zahlreiche Systeme verbreiten. 
+    Ein möglicher Angriff wäre, dass ein Angreifer ein scheinbar harmloses Basis-Image manipuliert, das von einem Unternehmen für mehrere Anwendungen verwendet wird. 
+    Nach dem automatischen Einspielen des Images in die CI/CD-Pipeline wird der Schadcode in allen neu erstellten Container-Instanzen ausgerollt. 
+    Dadurch könnte der Angreifer vertrauliche Kundendaten abgreifen, Zugangsdaten auslesen oder eine Hintertür installieren, über die später weitere Systeme kompromittiert werden. 
+    Da sich die Verteilung über automatisierte Prozesse vollzieht, bleibt der Angriff möglicherweise über längere Zeit unentdeckt und kann eine große Anzahl von Produktionssystemen gleichzeitig betreffen.
+\end{itemize} 
+\section{Best Practices für sichere Konfiguration}
+ 
+\subsection{Container}
+\begin{itemize}
+    \item Ressourcenlimits setzen, um Noisy-Neighbor-Probleme zu vermeiden.
+    \item Keine privilegierten Container und möglichst Rootless Container in Produktionsumgebungen verwenden.
+    \item Seccomp, AppArmor oder SELinux aktivieren, um Kernel-Escapes zu erschweren.
+    \item Read-Only RootFS und Volumes nutzen, um Dateisystem-Schäden zu begrenzen.
+    \item Regelmäßige Updates von Kernel und Container-Runtime reduzieren das Risiko bekannter Container-Escapes.
+\end{itemize}
+ 
+\subsection{Virtuelle Maschinen}
+\begin{itemize}
+    \item CPU-/RAM-Zuweisung sinnvoll konfigurieren, um Überlastung zu vermeiden.
+    \item Hypervisor regelmäßig patchen, um Escape-Schwachstellen zu schließen.
+    \item Kein unnötiges Geräte-Passthrough aktivieren.
+    \item Snapshots und Backups gegen Dateisystem-Fehler einsetzen.
+    \item Sicherheitsupdates und  gegen Side-Channel-Angriffe einspielen.
+\end{itemize}
+ 
+\subsection{Gesamtfazit}
+Container bieten hohe Effizienz und Flexibilität, weisen jedoch aufgrund des gemeinsam genutzten Kernels geringere Isolationsgarantien auf als virtuelle Maschinen. 
+Virtuelle Maschinen verursachen zwar höhere Ressourcen-Overheads, bieten jedoch insbesondere in Multi-Tenant- und sicherheitskritischen Szenarien stärkere Sicherheitsgrenzen. 
+In der Praxis hängt die Wahl daher stark vom Bedrohungsmodell und den Sicherheitsanforderungen des jeweiligen Deployment-Szenarios ab.
+
 
 % =====================================================================
 \section*{Hinweis zur KI-Nutzung}
@@ -202,11 +492,104 @@ gegen die Lehrgangs- und Referenzquellen abgeglichen.
 
 % =====================================================================
 \begin{thebibliography}{00}
-\bibitem{b_lehrgang} Systemsicherheits-Lehrgang, \glqq Container vs.\ Virtuelle Maschinen -- Ein tiefgehender Lehrgang\grqq, Hochschule Karlsruhe, 2026.
-\bibitem{b_bedrohung} \glqq Container und Virtuelle Maschinen -- Isolationsmechanismen, Bedrohungsmodelle und Sicherheitsanalyse\grqq, internes Skript, Hochschule Karlsruhe, 2026.
-\bibitem{b_cve5736} MITRE, CVE-2019-5736 (\code{runc}-Container-Breakout), 2019.
-\bibitem{b_dirtypipe} M.\ Kellermann, \glqq The Dirty Pipe Vulnerability (CVE-2022-0847)\grqq, 2022.
-\bibitem{b_venom} CrowdStrike, \glqq VENOM Vulnerability (CVE-2015-3456)\grqq, 2015.
+
+\bibitem{b_nist_container}
+M. Souppaya, J. Morello und K. Scarfone,
+\glqq Application Container Security Guide\grqq,
+NIST Special Publication 800-190,
+National Institute of Standards and Technology,
+Gaithersburg, MD, USA, 2017.
+
+\bibitem{b_container_survey}
+A. Y. Wong, E. G. Chekole, M. Ochoa und J. Zhou,
+\glqq Threat Modeling and Security Analysis of Containers: A Survey\grqq,
+arXiv:2111.11475, 2021.
+
+\bibitem{b_vm_container_compare}
+U. Gupta,
+\glqq Comparison between Security Majors in Virtual Machine and Linux Containers\grqq,
+arXiv:1507.07816, 2015.
+
+\bibitem{b_cve5736}
+MITRE,
+\glqq CVE-2019-5736: runc Container Breakout\grqq,
+2019.
+
+\bibitem{b_dirtypipe}
+M. Kellermann,
+\glqq The Dirty Pipe Vulnerability (CVE-2022-0847)\grqq,
+2022.
+
+\bibitem{b_venom}
+CrowdStrike,
+\glqq VENOM Vulnerability (CVE-2015-3456)\grqq,
+2015.
+
 \end{thebibliography}
+
+% =====================================================================
+% Anhang -- Bildschirmaufnahmen (Block 3)
+% =====================================================================
+\clearpage
+\onecolumn
+\appendix
+\section{Bildschirmaufnahmen der Demonstrationen}
+\label{app:screenshots}
+
+\begin{figure}[!ht]
+  \centering
+  \includegraphics[width=\textwidth]{figures/privileged_vergleich.png}
+  \caption{Demo~1 -- Privilegierter Container. Oben: normaler Container,
+  Zugriff auf \texttt{/proc/1/root/etc/shadow} verweigert. Unten:
+  privilegierter Container, Host-Passwort-Hashes lesbar.}
+  \label{fig:privileged}
+\end{figure}
+
+\clearpage
+\begin{figure}[!ht]
+  \centering
+  \includegraphics[width=\textwidth]{figures/shadow_lesen.png}
+  \caption{Demo~2 -- Bind-Mount. Der Container liest über
+  \texttt{/host-etc/shadow} die Host-Hashes; der Hash des
+  Benutzerkontos wurde geschwärzt.}
+  \label{fig:bindmount_read}
+\end{figure}
+
+\clearpage
+\begin{figure}[!ht]
+  \centering
+  \includegraphics[width=0.85\textwidth]{figures/hosts_schreiben.png}
+  \caption{Demo~2 -- Schreibnachweis. Die aus dem Container eingefügte
+  Zeile erscheint auf dem Host in \texttt{/etc/hosts}.}
+  \label{fig:bindmount_write}
+\end{figure}
+
+\begin{figure}[!ht]
+  \centering
+  \includegraphics[width=0.85\textwidth]{figures/seccomp_status.png}
+  \caption{Demo~3 -- Seccomp-Status: aktiver Filter (\texttt{2}) im
+  Normalbetrieb gegenüber deaktiviertem Filter (\texttt{0}) bei
+  \texttt{seccomp=unconfined}.}
+  \label{fig:seccomp}
+\end{figure}
+
+\clearpage
+\begin{figure}[!ht]
+  \centering
+  \includegraphics[width=0.85\textwidth]{figures/netzwerk_curl_1.png}
+  \caption{Demo~4 -- Netzwerk. Keine Erreichbarkeit des Dienstes von einem
+  zweiten LAN-Gerät.
+  \texttt{Ping}.}
+  \label{fig:netzwerk_1}
+\end{figure}
+
+\begin{figure}[!ht]
+  \centering
+  \includegraphics[width=0.85\textwidth]{figures/netzwerk_curl_2.png}
+  \caption{Demo~4 -- Netzwerk. Erreichbarkeit des Dienstes von einem
+  zweiten LAN-Gerät.
+  \texttt{Ping}.}
+  \label{fig:netzwerk_2}
+\end{figure}
 
 \end{document}
